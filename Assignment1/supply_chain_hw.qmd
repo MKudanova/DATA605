@@ -1,1 +1,244 @@
+---
+title: "Supply Chain Analytics with Vectors, Matrices, and Systems of Equations"
+subtitle: "DATA 605 – Homework 1"
+author: "Madina Kudanova"
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  echo: true
+---
 
+```{r setup}
+#| message: false
+library(MASS)  # for ginv() – used in Part C
+```
+
+## Reading Data files (inventory.csv, demand.csv, and shipments.csv)
+
+```{r data}
+inventory <- read.csv("inventory.csv")
+demand_df <- read.csv("demand.csv")
+shipments <- read.csv("shipments.csv")
+
+# convert demand.csv (long format: Region, Demand) into a named vector
+demand <- setNames(demand_df$Demand, demand_df$Region)
+
+inventory
+demand
+shipments
+
+```
+
+## Part A: Inventory Analysis (Vector Operations)
+
+### 1. Total inventory per region
+
+```{r part-a-totals}
+region_totals <- c(
+  Region1 = sum(inventory$Region1),
+  Region2 = sum(inventory$Region2),
+  Region3 = sum(inventory$Region3)
+)
+region_totals
+```
+
+### 2. Surplus or shortage relative to demand
+
+```{r part-a-surplus}
+surplus <- region_totals - demand
+surplus
+```
+
+### 3.Region most at risk
+
+```{r part-a-risk}
+at_mostrisk <- names(surplus)[which.min(surplus)]
+at_mostrisk
+```
+
+```{r part-a-plot}
+#| fig-cap: "Inventory vs. Demand by Region"
+bar_data <- rbind(Inventory = region_totals, Demand = demand)
+barplot(bar_data, beside = TRUE, col = c("blue", "firebrick"),
+              legend.text = TRUE, main = "Inventory vs. Demand by Region",
+        ylab = "    Units")
+```
+
+### 4. Interpretaton of business implication
+
+Region1 and Region2 each have 300 more units than needed. Region3 has exactly 2,500 units of inventory against 2,500 in demand, meaning no extra units are available. This makes Region3 the most at risk of running short if demand increases or a shipment is delayed. Management should prioritize replenishing Region3, reevaluate its demand forecast, and consider moving some surplus inventory from Region1 or Region2 to Region3 instead of ordering new stock.
+
+## Part B: Shipment Matrix Analysis (Matrix Operations)
+
+### 1. Shipment matrix
+
+```{r part-b-matrix}
+Shipment_matrix <- as.matrix(shipments[, c("Region1", "Region2", "Region3")])
+rownames(Shipment_matrix) <- shipments$Warehouse
+Shipment_matrix
+```
+
+### 2. Row totals (shipped by warehouse) and column totals (received by region)
+
+```{r part-b-totals}
+row_totals <- rowSums(Shipment_matrix)
+
+col_totals <- colSums(Shipment_matrix)
+row_totals
+col_totals
+```
+
+### 3. Warehouse shipping the most &
+### 4. Region receiving the most
+
+```{r part-b-max}
+top_warehouse <- names(row_totals)[which.max(row_totals)]
+top_region    <- names(col_totals)[which.max(col_totals)]
+top_warehouse
+top_region
+```
+
+```{r part-b-plot}
+#| fig-cap: "Shipments by Warehouse and Region"
+barplot(Shipment_matrix, beside = TRUE, col = c("magenta", "darkorange", "green"),
+        legend.text = rownames(Shipment_matrix), main = "Shipments by Warehouse and Region",
+        ylab = "Units Shipped")
+```
+
+## Part C: Resource Allocation Model 
+
+Management wants to determine how many additional truckloads should be
+sent from each warehouse next week to meet projected demand. Let:
+
+- $x$ = truckloads shipped from Warehouse A
+- $y$ = truckloads shipped from Warehouse B
+- $z$ = truckloads shipped from Warehouse C
+
+Based on transportation capacity and regional replenishment requirements,
+management developed the following system of equations:
+
+$$
+\begin{aligned}
+x + y + z &= 18 \\
+2x + y &= 26 \\
+y + 2z &= 22
+\end{aligned}
+$$
+
+These equations represent:
+
+- Total truckloads available for shipment
+- Capacity constraints at Warehouse A
+- Combined delivery requirements for Warehouses B and C
+
+### Task 1: Express the System in Matrix Form
+
+Rewriting the system as $Ax = b$:
+
+$$
+\begin{bmatrix} 1 & 1 & 1 \\ 2 & 1 & 0 \\ 0 & 1 & 2 \end{bmatrix}
+\begin{bmatrix} x \\ y \\ z \end{bmatrix}
+=
+\begin{bmatrix} 18 \\ 26 \\ 22 \end{bmatrix}
+$$
+
+Where:
+
+- **Coefficient matrix** $A$ (3×3, from the coefficients of x, y, z in each equation)
+- **Variable vector** $x = \begin{bmatrix} x \\ y \\ z \end{bmatrix}$ (truckloads from Warehouse A, B, C)
+- **Constants vector** $b = \begin{bmatrix} 18 \\ 26 \\ 22 \end{bmatrix}$
+
+```{r part-c-setup}
+A <- matrix(c(1, 1, 1,
+              2, 1, 0,
+              0, 1, 2),
+            nrow = 3, byrow = TRUE)
+b <- c(18, 26, 22)
+A
+b
+```
+
+### Task 2: Solve the System Computationally
+
+Before solving, we need to check whether an exact solution exists:
+
+```{r part-c-check}
+det(A)
+rankA   <- qr(A)$rank
+rankAug <- qr(cbind(A, b))$rank
+rankA
+rankAug
+```
+
+`det(A) = 0` means $A$ is singular. `rank(A) = 2` while `rank([A|b]) = 3`
+means the system is inconsistent — no exact (x, y, z) can satisfy all
+three equations. Attempting a direct solve confirms this:
+
+```{r part-c-solve}
+#| error: true
+solve(A, b)
+```
+
+**Algebraic proof:** take $2 \times$ Equation 1 minus Equation 2:
+
+$$
+2(x+y+z) - (2x+y) = 2(18) - 26 \;\Rightarrow\; y + 2z = 10
+$$
+
+But Equation 3 independently states $y + 2z = 22$ — a direct
+contradiction, so no (x, y, z) satisfies all three equations
+simultaneously.
+
+The closest achievable compromise (least-squares) is computed instead:
+
+```{r part-c-lsq}
+solution <- as.vector(ginv(A) %*% b)
+names(solution) <- c("x", "y", "z")
+round(solution, 2)
+```
+
+**Values obtained:** $x \approx 8.33$, $y \approx 7.33$, $z \approx 6.33$.
+
+### Task 3: Verify the Solution
+
+```{r part-c-verify}
+check <- A %*% solution
+round(check, 2)
+
+residual <- as.vector(check) - b
+round(residual, 2)
+```
+
+The residuals (+4, -2, -2) are not zero, so $Ax \neq b$ — confirming the
+least-squares values are only the closest fit, not an exact solution.
+
+```{r part-c-plot}
+#| fig-cap: "Least-Squares Truckload Allocation by Warehouse"
+barplot(solution, col = c("cyan", "chartreuse", "coral"),
+        main = "Recommended Additional Truckloads by Warehouse (least-squares)",
+        ylab = "Truckloads")
+```
+
+### Task 4: Business Interpretation
+
+Region1 and Region2 each have 300 more units than needed. Region3 has
+exactly 2,500 units of inventory against 2,500 in demand, meaning no
+extra units are available (Part A). Warehouse A ships the most product
+overall (1,200 units), and Region1 receives the most (1,200 units)
+(Part B). This system has no exact solution: no combination of
+truckloads from A, B, and C satisfies all three planning targets at
+once. The closest achievable values are approximately 8, 7, and 6
+truckloads from Warehouses A, B, and C respectively, with Warehouse A
+still contributing the most.
+
+Because no exact allocation exists, management cannot simply solve its
+way to a plan; at least one of the three targets has to be relaxed. The
+gap is largest around Warehouses B and C's combined requirement, which
+lines up with Region3 (served heavily by those two warehouses) already
+sitting at zero surplus in Part A.
+
+This is why systems of linear equations are useful in supply chain
+planning: they test whether a set of operational targets is achievable
+together at all, before trucks are dispatched.
